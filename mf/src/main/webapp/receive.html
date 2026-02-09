@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>情绪识别系统</title>
+    <meta charset="UTF-8">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        h2 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .video-section {
+            flex: 2;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .info-section {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .success { background-color: #dff0d8; color: #3c763d; }
+        .error { background-color: #f2dede; color: #a94442; }
+        .info { background-color: #d9edf7; color: #31708f; }
+
+        #videoContainer {
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        #video {
+            border-radius: 8px;
+            max-width: 100%;
+            border: 2px solid #ddd;
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .result-container {
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .result-label {
+            font-weight: bold;
+            color: #666;
+        }
+
+        .result-value {
+            color: #333;
+            font-size: 1.1em;
+        }
+
+        #captureButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        #captureButton:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #captureButton:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+
+        #log {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fff;
+            font-size: 13px;
+        }
+
+        .emotion-icon {
+            font-size: 2em;
+            margin-left: 10px;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .active-emotion {
+            animation: pulse 2s infinite;
+        }
+
+        .video-container {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        
+        #remoteVideo {
+            width: 640px;
+            height: 480px;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+            background-color: #000;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-top: 20px;
+            height: 300px;
+            position: relative;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .emotion-anger { color: #FF4D4D; }
+        .emotion-disgust { color: #9C27B0; }
+        .emotion-fear { color: #673AB7; }
+        .emotion-happiness { color: #4CAF50; }
+        .emotion-sadness { color: #2196F3; }
+        .emotion-surprise { color: #FF9800; }
+        .emotion-neutral { color: #607D8B; }
+
+        /* 添加音频波形样式 */
+        .audio-visualizer {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            height: 100px;
+        }
+
+        #audioCanvas {
+            width: 100%;
+            height: 100%;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h2>情绪识别系统</h2>
+    
+    <div class="container">
+        <div class="video-section">
+            <div class="video-container">
+                <video id="remoteVideo" autoplay playsinline
+                    onerror="addLog('视频错误: ' + event.target.error.message, 'error')"
+                    onloadedmetadata="addLog('视频元数据已加载', 'info')"
+                    onplaying="addLog('视频开始播放', 'success')"></video>
+            </div>
+            
+            <!-- 添加音频波形显示器 -->
+            <div class="audio-visualizer">
+                <canvas id="audioCanvas"></canvas>
+            </div>
+        </div>
+        <div class="info-section" style="flex: 1">
+            <div class="result-container">
+                <div class="result-item">
+                    <span class="result-label">处理帧数:</span>
+                    <span class="result-value" id="frameCount">0</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">当前情绪:</span>
+                    <span class="result-value" id="emotion">等待检测...</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">情绪图标:</span>
+                    <span class="emotion-icon" id="emotionIcon">😐</span>
+                </div>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalFrames">0</div>
+                    <div class="stat-label">总帧数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="dominantEmotion">-</div>
+                    <div class="stat-label">主要情绪</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="captureTime">00:00</div>
+                    <div class="stat-label">采集时长</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="emotionChart"></canvas>
+            </div>
+            
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let peerConnection = null;
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        function addLog(message, type = 'info') { //日志函数
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            div.className = `status ${type}`; // 添加样式类名
+            document.getElementById('log').prepend(div); //插入日志到页面
+            if (document.getElementById('log').children.length > 50) { //控制日志条目不超过 50 条，避免内存泄漏或性能下降。
+                document.getElementById('log').removeChild(document.getElementById('log').lastChild);
+            }
+        }
+
+        function setupWebRTC() { //采用WEBRTC实现视频传输
+            if (peerConnection) {
+                peerConnection.close();
+            }
+            peerConnection = new RTCPeerConnection(configuration);
+            addLog("WebRTC连接已创建", "info");
+            
+            // 处理远程流
+            peerConnection.ontrack = (event) => {
+                addLog(`收到媒体轨道: ${event.track.kind}`, "info");
+                const remoteVideo = document.getElementById('remoteVideo');
+                
+                // 确保remoteVideo的srcObject存在
+                if (!remoteVideo.srcObject) {
+                    remoteVideo.srcObject = new MediaStream();
+                }
+                
+                // 将新轨道添加到现有的MediaStream中
+                remoteVideo.srcObject.addTrack(event.track);
+                
+                if (event.track.kind === 'video') {
+                    addLog('添加视频轨道', 'info');
+                    
+                    remoteVideo.oncanplay = () => {
+                        addLog('视频准备就绪，可以播放', 'info');
+                    };
+                    
+                    remoteVideo.play()
+                        .then(() => addLog('视频开始播放', 'success'))
+                        .catch(err => {
+                            addLog(`视频播放失败: ${err.message}`, 'error');
+                            // 添加点击播放提示
+                            const playPrompt = document.createElement('div');
+                            playPrompt.textContent = '点击开始播放音视频';
+                            playPrompt.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 20px; border-radius: 8px; z-index: 1000; cursor: pointer;';
+                            document.body.appendChild(playPrompt);
+                            
+                            // 点击事件处理
+                            const clickHandler = async () => {
+                                try {
+                                    await remoteVideo.play();
+                                    addLog('音视频开始播放', 'success');
+                                    
+                                    // 初始化音频可视化
+                                    if (remoteVideo.srcObject) {
+                                        const audioTracks = remoteVideo.srcObject.getAudioTracks();
+                                        if (audioTracks.length > 0) {
+                                            const audioStream = new MediaStream([audioTracks[0]]);
+                                            initAudioVisualizer(audioStream);
+                                            addLog('音频可视化初始化成功', 'success');
+                                        }
+                                    }
+                                    
+                                    playPrompt.remove();
+                                    document.removeEventListener('click', clickHandler);
+                                } catch (e) {
+                                    addLog(`播放失败: ${e.message}`, 'error');
+                                }
+                            };
+                            
+                            // 添加点击事件监听
+                            document.addEventListener('click', clickHandler);
+                            playPrompt.addEventListener('click', clickHandler);
+                        });
+                } else if (event.track.kind === 'audio') {
+                    addLog('添加音频轨道', 'info');
+                }
+                
+                // 监听轨道状态
+                event.track.onended = () => {
+                    addLog(`远程${event.track.kind}轨道已结束`, "error");
+                    if (event.track.kind === 'audio' && animationId) {
+                        cancelAnimationFrame(animationId);
+                    }
+                };
+            };
+
+            // 监听连接状态
+            peerConnection.onconnectionstatechange = () => {
+                addLog(`WebRTC连接状态: ${peerConnection.connectionState}`, "info");
+            };
+
+            // 监听ICE连接状态
+            peerConnection.oniceconnectionstatechange = () => {
+                addLog(`ICE连接状态: ${peerConnection.iceConnectionState}`, "info");
+            };
+            
+            // 监听信令状态
+            peerConnection.onsignalingstatechange = () => {
+                addLog(`信令状态: ${peerConnection.signalingState}`, "info");
+            };
+
+            // 处理 ICE 候选
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    addLog("发送ICE候选", "info");
+                    sendSignalingMessage({
+                        type: 'candidate',
+                        candidate: event.candidate
+                    });
+                }
+            };
+        }
+
+        function sendSignalingMessage(message) { //通过已建立的 WebSocket 连接发送信令消息
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+            }
+        }
+
+        async function handleSignalingMessage(message) { //处理来自信令服务器的消息
+            try {
+                const data = JSON.parse(message);
+                addLog(`收到信令消息: ${data.type}`, "info");
+                
+                if (data.type === 'offer') { //处理 Offer 类型消息
+                    if (!peerConnection) {
+                        setupWebRTC();
+                    }
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    sendSignalingMessage(answer);
+                    addLog('已响应视频请求', 'success');
+                }
+                else if (data.type === 'candidate' && peerConnection) {//处理 Candidate 类型消息
+                    addLog('添加ICE候选', 'info');
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+            } catch (error) {
+                addLog('处理信令消息错误: ' + error.message, 'error');
+            }
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket("ws://localhost:8080/websocket-demo/numberws");//初始化 WebSocket 连接
+            
+            ws.onopen = function() { //连接成功回调
+                reconnectAttempts = 0;
+                addLog("WebSocket连接已建立", "success");
+                startHeartbeat();
+            };
+            
+            ws.onmessage = function(event) {
+                const data = event.data;
+                
+                // 处理 WebRTC 信令消息
+                if (data.startsWith('{')) { //处理 WebRTC 信令消息
+                    handleSignalingMessage(data);
+                    return;
+                }
+                
+                addLog(`接收到原始数据: ${data}`, "info");
+                
+                if (data.includes('frame:')) { //处理帧数统计
+                    const frameCount = data.split(':')[1];
+                    document.getElementById("frameCount").textContent = frameCount;
+                    
+                    // 在收到第一帧时启动计时器
+                    if (frameCount === '1') {
+                        startTime = new Date();
+                        if (timerInterval) clearInterval(timerInterval);
+                        timerInterval = setInterval(updateCaptureTime, 1000);
+                    }
+                    
+                    addLog(`更新帧数: ${frameCount}`, "info");
+                } else if (data === "pong") { //处理心跳响应
+                    addLog("收到心跳响应", "info");
+                } else { //处理情绪数据
+                    // 更新情绪显示
+                    document.getElementById("emotion").textContent = data;// 更新情绪文字
+                    updateEmotionIcon(data); // 更新情绪图标
+                    updateEmotionStats(data.toLowerCase()); // 更新统计
+                    addLog(`更新情绪: ${data}`, "success");
+                }
+            };
+            
+            ws.onerror = function(error) {//错误处理
+                addLog(`WebSocket错误: ${error.message}`, "error");
+                console.error("WebSocket错误:", error);
+            };
+
+            ws.onclose = function(event) { //连接关闭处理
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                
+                const reason = event.reason || "未知原因";
+                const code = event.code;
+                addLog(`WebSocket连接关闭 (代码: ${code}, 原因: ${reason})`, "error");
+                
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    addLog(`尝试重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, "info");
+                    setTimeout(connectWebSocket, 3000);
+                } else {
+                    addLog("达到最大重连次数，停止重连", "error");
+                }
+                cleanupAudioVisualizer();
+            };
+        }
+        
+        function startHeartbeat() { //心跳连接
+            addLog("启动心跳检测", "info");
+            setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send("ping");
+                    addLog("发送心跳", "info");
+                } else {
+                    addLog("心跳检测失败：WebSocket未连接", "error");
+                }
+            }, 30000);
+        }
+
+        function updateEmotionIcon(emotion) {
+            const iconElement = document.getElementById("emotionIcon");
+            let icon = "😐";
+
+            switch(emotion.toLowerCase()) {
+                case "anger": icon = "😠"; break;
+                case "disgust": icon = "🤢"; break;
+                case "fear": icon = "😨"; break;
+                case "happiness": icon = "😊"; break;
+                case "sadness": icon = "😢"; break;
+                case "surprise": icon = "😲"; break;
+                case "neutral": icon = "😐"; break;
+                default: 
+                    addLog(`未知情绪类型: ${emotion}`, "error");
+                    return;
+            }
+
+            iconElement.textContent = icon;
+            iconElement.classList.remove("active-emotion");
+            void iconElement.offsetWidth;
+            iconElement.classList.add("active-emotion");
+            addLog(`更新情绪图标: ${icon}`, "info");
+        }
+
+
+        // 添加情绪统计数据
+        const emotionStats = {
+            anger: 0,
+            disgust: 0,
+            fear: 0,
+            happiness: 0,
+            sadness: 0,
+            surprise: 0,
+            neutral: 0
+        };
+
+        // 初始化饼图
+        const ctx = document.getElementById('emotionChart').getContext('2d');
+        const emotionChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['愤怒', '厌恶', '恐惧', '快乐', '悲伤', '惊讶', '中性'],
+                datasets: [{
+                    data: [0, 0, 0, 0, 0, 0, 0],
+                    backgroundColor: [
+                        '#FF4D4D', // 愤怒
+                        '#9C27B0', // 厌恶
+                        '#673AB7', // 恐惧
+                        '#4CAF50', // 快乐
+                        '#2196F3', // 悲伤
+                        '#FF9800', // 惊讶
+                        '#607D8B'  // 中性
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            font: {
+                                size: 14
+                            }
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: '情绪分布统计',
+                        font: {
+                            size: 16
+                        }
+                    }
+                }
+            }
+        });
+
+
+        // 更新情绪统计和图表
+        function updateEmotionStats(emotion) {
+            if (emotion in emotionStats) {
+                emotionStats[emotion]++;
+                
+                // 更新图表数据
+                emotionChart.data.datasets[0].data = [
+                    emotionStats.anger,
+                    emotionStats.disgust,
+                    emotionStats.fear,
+                    emotionStats.happiness,
+                    emotionStats.sadness,
+                    emotionStats.surprise,
+                    emotionStats.neutral
+                ];
+                emotionChart.update();
+
+                // 更新主要情绪
+                const totalFrames = Object.values(emotionStats).reduce((a, b) => a + b, 0);
+                document.getElementById('totalFrames').textContent = totalFrames;
+                
+                // 找出出现次数最多的情绪
+                const dominantEmotion = Object.entries(emotionStats).reduce((a, b) => 
+                    b[1] > a[1] ? b : a
+                )[0];
+                
+                // 将英文情绪名称转换为中文
+                const emotionNames = {
+                    anger: '愤怒',
+                    disgust: '厌恶',
+                    fear: '恐惧',
+                    happiness: '快乐',
+                    sadness: '悲伤',
+                    surprise: '惊讶',
+                    neutral: '中性'
+                };
+                
+                document.getElementById('dominantEmotion').textContent = emotionNames[dominantEmotion];
+                document.getElementById('dominantEmotion').className = 'stat-value emotion-' + dominantEmotion;
+            }
+        }
+
+        // 添加时长计时相关变量
+        let startTime = null;
+        let timerInterval = null;
+
+        // 更新时长显示的函数
+        function updateCaptureTime() {
+            if (!startTime) return;
+            
+            const now = new Date();
+            const diff = Math.floor((now - startTime) / 1000); // 转换为秒
+            const minutes = Math.floor(diff / 60);
+            const seconds = diff % 60;
+            
+            document.getElementById('captureTime').textContent = 
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        // 添加音频相关变量
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let audioCanvas;
+        let audioCtx;
+        let animationId;
+        let audioStream = null; // 添加变量存储音频流
+
+        // 修改音频可视化初始化函数
+        function initAudioVisualizer(stream) {
+            try {
+                // 创建音频上下文
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                
+                // 配置分析器节点
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                // 连接音频源
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // 创建增益节点来控制音量
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0; // 设置音量为100%
+                
+                // 连接音频处理链
+                source.connect(analyser);      // 连接到分析器用于可视化
+                source.connect(gainNode);      // 连接到增益节点
+                gainNode.connect(audioContext.destination);  // 连接到音频输出
+                
+                // 获取画布上下文
+                audioCanvas = document.getElementById('audioCanvas');
+                audioCtx = audioCanvas.getContext('2d');
+                
+                // 调整画布大小以匹配容器
+                function resizeCanvas() {
+                    audioCanvas.width = audioCanvas.offsetWidth;
+                    audioCanvas.height = audioCanvas.offsetHeight;
+                }
+                
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // 开始动画
+                drawAudioVisualizer();
+                
+                addLog("音频可视化和播放初始化成功", "success");
+            } catch (error) {
+                addLog("音频初始化失败: " + error.message, "error");
+                console.error("音频初始化错误:", error);
+            }
+        }
+
+        // 添加音频可视化绘制函数
+        function drawAudioVisualizer() {
+            animationId = requestAnimationFrame(drawAudioVisualizer);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            const width = audioCanvas.width;
+            const height = audioCanvas.height;
+            const barWidth = width / dataArray.length;
+            
+            audioCtx.clearRect(0, 0, width, height);
+            
+            dataArray.forEach((value, index) => {
+                const barHeight = (value / 255) * height;
+                const x = index * barWidth;
+                const y = height - barHeight;
+                
+                // 根据音量大小渐变颜色
+                const hue = (value / 255) * 120; // 从红色渐变到绿色
+                audioCtx.fillStyle = `hsl(${hue}, 70%, 60%)`;
+                audioCtx.fillRect(x, y, barWidth - 1, barHeight);
+            });
+        }
+
+        // 修改关闭连接的处理，确保清理音频资源
+        function cleanupAudioVisualizer() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            if (audioContext) {
+                audioContext.close().catch(console.error);
+                audioContext = null;
+            }
+        }
+
+        window.addEventListener('load', () => {
+            connectWebSocket();
+        });
+    </script>
+</body>
+</html> 

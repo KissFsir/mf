@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>情绪识别系统</title>
+    <meta charset="UTF-8">
+    <!-- 修改为本地TensorFlow.js核心库 -->
+    <script src="./lib/tensorflow/tf.min.js"></script>
+    <!-- 修改为本地BlazeFace模型库 -->
+    <script src="./lib/tensorflow-models/blazeface.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        h2 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .video-section {
+            flex: 2;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .info-section {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .success { background-color: #dff0d8; color: #3c763d; }
+        .error { background-color: #f2dede; color: #a94442; }
+        .info { background-color: #d9edf7; color: #31708f; }
+
+        #videoContainer {
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        #video {
+            border-radius: 8px;
+            max-width: 100%;
+            border: 2px solid #ddd;
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .result-container {
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .result-label {
+            font-weight: bold;
+            color: #666;
+        }
+
+        .result-value {
+            color: #333;
+            font-size: 1.1em;
+        }
+
+        #captureButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        #captureButton:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #captureButton:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+
+        #log {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fff;
+            font-size: 13px;
+        }
+
+        .emotion-icon {
+            font-size: 2em;
+            margin-left: 10px;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .active-emotion {
+            animation: pulse 2s infinite;
+        }
+
+        /* 添加音频波形样式 */
+        .audio-visualizer {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            height: 100px;
+        }
+
+        #audioCanvas {
+            width: 100%;
+            height: 100%;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h2>情绪识别系统</h2>
+    
+    <div class="container">
+        <div class="video-section">
+            <div id="status" class="status info">正在连接服务器...</div>
+            <div id="videoContainer">
+                <video id="video" width="640" height="480" autoplay playsinline></video>
+                <canvas id="canvas" width="640" height="480"></canvas>
+            </div>
+            <button onclick="toggleCapture()" id="captureButton" disabled>开始采集</button>
+        </div>
+
+        <div class="info-section">
+            <div class="result-container">
+                <div class="result-item">
+                    <span class="result-label">采集帧数:</span>
+                    <span class="result-value" id="frameCount">0</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">采集状态:</span>
+                    <span class="result-value" id="captureStatus">未开始</span>
+                </div>
+            </div>
+            <div id="log"></div>
+            
+            <!-- 添加音频波形显示器 -->
+            <div class="audio-visualizer">
+                <canvas id="audioCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+        const statusDiv = document.getElementById('status');
+        const captureButton = document.getElementById('captureButton');
+        const logDiv = document.getElementById('log');
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let isCapturing = false;
+        let captureInterval;
+        let peerConnection = null;
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        // 添加音频相关变量
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let audioCanvas;
+        let audioCtx;
+        let animationId;
+
+        function addLog(message, type = 'info') {
+            // 创建日志容器
+            const div = document.createElement('div');
+            
+            // 添加带时间戳的内容
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            
+            // 设置样式类 (基础类+类型类)
+            div.className = `status ${type}`;  // 例如：status info
+            
+            // 插入到日志容器顶部
+            logDiv.prepend(div);
+            
+            // 数量控制（保留最新50条）
+            if (logDiv.children.length > 50) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+        }
+        
+/*
+        function addLog(message, type = 'info') {
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            div.className = `status ${type}`;
+            logDiv.prepend(div);
+            if (logDiv.children.length > 50) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+        }
+
+*/
+
+        async function initWebRTC() {
+            peerConnection = new RTCPeerConnection(configuration);
+            let negotiating = false;
+            
+            // 添加本地视频流到 peer connection
+            const stream = video.srcObject;
+            if (!stream) {
+                addLog("错误：视频流未就绪", "error");
+                return;
+            }
+            
+            // 获取视频轨道
+            const videoTrack = stream.getVideoTracks()[0];
+            if (!videoTrack) {
+                addLog("错误：视频轨道未就绪", "error");
+                return;
+            }
+            
+            // 获取音频轨道
+            const audioTrack = stream.getAudioTracks()[0];
+            if (!audioTrack) {
+                addLog("错误：音频轨道未就绪", "error");
+                return;
+            }
+            
+            addLog("正在添加视频和音频轨道...", "info");
+            
+            try {
+                // 添加视频轨道
+                const videoSender = peerConnection.addTrack(videoTrack, stream);
+                addLog(`添加视频轨道: ${videoTrack.label}, enabled: ${videoTrack.enabled}, readyState: ${videoTrack.readyState}`, "info");
+                
+                // 添加音频轨道
+                const audioSender = peerConnection.addTrack(audioTrack, stream);
+                addLog(`添加音频轨道: ${audioTrack.label}, enabled: ${audioTrack.enabled}, readyState: ${audioTrack.readyState}`, "info");
+                
+                // 监听视频发送器状态
+                videoSender.track.onended = () => {
+                    addLog("发送器视频轨道已结束，尝试重新获取摄像头", "warning");
+                    setupCamera();
+                };
+                
+                // 监听音频发送器状态
+                audioSender.track.onended = () => {
+                    addLog("发送器音频轨道已结束，尝试重新获取麦克风", "warning");
+                    setupCamera();
+                };
+                
+                // 监听轨道状态
+                videoTrack.onended = () => {
+                    addLog(`视频轨道已结束: ${videoTrack.label}`, "error");
+                    setupCamera();
+                };
+                videoTrack.onmute = () => addLog(`视频轨道已静音: ${videoTrack.label}`, "warning");
+                videoTrack.onunmute = () => addLog(`视频轨道已取消静音: ${videoTrack.label}`, "info");
+                
+                audioTrack.onended = () => {
+                    addLog(`音频轨道已结束: ${audioTrack.label}`, "error");
+                    setupCamera();
+                };
+                audioTrack.onmute = () => addLog(`音频轨道已静音: ${audioTrack.label}`, "warning");
+                audioTrack.onunmute = () => addLog(`音频轨道已取消静音: ${audioTrack.label}`, "info");
+                
+                // 定期检查轨道状态
+                setInterval(() => {
+                    if (videoTrack.readyState === 'ended' || !videoTrack.enabled) {
+                        addLog("检测到视频轨道状态异常，尝试重新获取摄像头", "warning");
+                        setupCamera();
+                    }
+                    if (audioTrack.readyState === 'ended' || !audioTrack.enabled) {
+                        addLog("检测到音频轨道状态异常，尝试重新获取麦克风", "warning");
+                        setupCamera();
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                addLog(`添加媒体轨道失败: ${error.message}`, "error");
+                return;
+            }
+
+            // 强制创建初始 offer
+            try {
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveVideo: true,
+                    offerToReceiveAudio: true  // 确保接收音频
+                });
+                await peerConnection.setLocalDescription(offer);
+                addLog("发送初始音视频请求", "info");
+                sendSignalingMessage(offer);
+            } catch (error) {
+                addLog(`创建初始offer失败: ${error.message}`, "error");
+            }
+
+            // 处理 ICE 候选
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    addLog("发送ICE候选", "info");
+                    sendSignalingMessage({
+                        type: 'candidate',
+                        candidate: event.candidate
+                    });
+                }
+            };
+
+            // 监听连接状态
+            peerConnection.onconnectionstatechange = () => {
+                addLog(`WebRTC连接状态: ${peerConnection.connectionState}`, "info");
+            };
+            
+            // 监听信令状态
+            peerConnection.onsignalingstatechange = () => {
+                addLog(`信令状态: ${peerConnection.signalingState}`, "info");
+            };
+            
+            // 监听协商需求
+            peerConnection.onnegotiationneeded = async () => {
+                try {
+                    if (negotiating || peerConnection.signalingState != "stable") {
+                        addLog("正在协商中，跳过新的协商", "info");
+                        return;
+                    }
+                    negotiating = true;
+                    addLog("开始新的协商", "info");
+                    
+                    const offer = await peerConnection.createOffer({
+                        offerToReceiveVideo: true,
+                        offerToReceiveAudio: true
+                    });
+                    //异常处理机制
+                    if (peerConnection.signalingState != "stable") {
+                        addLog("连接状态不稳定，取消协商", "warning");
+                        return;
+                    }
+                    await peerConnection.setLocalDescription(offer);
+                    sendSignalingMessage(offer);
+                } catch (err) {
+                    addLog(`协商错误: ${err.message}`, "error");
+                } finally {
+                    negotiating = false;
+                }
+            };
+        }
+
+        function sendSignalingMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {  //双重验证机制
+                ws.send(JSON.stringify(message));  //数据格式处理,自动序列化
+            }
+        }
+
+        async function handleSignalingMessage(message) {
+            try {
+                const data = JSON.parse(message); //安全验证机制,强制进行 JSON 解析，防止注入攻击
+                
+                if (data.type === 'answer') {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data)); //处理 SDP Answer,将远端 SDP 描述写入本地 PeerConnection
+                    addLog('接收端已接受视频连接', 'success');
+                }
+                else if (data.type === 'candidate') {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));//处理 ICE Candidate,添加远端网络路径信息
+                }
+            } catch (error) {
+                addLog('处理信令消息错误: ' + error.message, 'error');
+            }
+        }
+
+        async function setupCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 15 }
+                    },
+                    audio: true  // 添加音频约束
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // 视频处理部分保持不变
+                const videoTrack = stream.getVideoTracks()[0];
+                if (!videoTrack) {
+                    throw new Error("没有获取到视频轨道");
+                }
+                
+                addLog(`获取到视频轨道: ${videoTrack.label}`, "info");
+                addLog(`初始轨道状态: enabled=${videoTrack.enabled}, readyState=${videoTrack.readyState}`, "info");
+                
+                videoTrack.enabled = true;
+                video.srcObject = stream;
+                
+                // 初始化音频可视化
+                initAudioVisualizer(stream);
+                
+                // 等待视频元数据加载
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        addLog("视频元数据已加载", "info");
+                        resolve();
+                    };
+                });
+                
+                // 等待视频实际可以播放
+                await new Promise((resolve) => {
+                    video.oncanplay = () => {
+                        addLog("视频可以开始播放", "info");
+                        resolve();
+                    };
+                });
+                
+                // 等待视频实际开始播放
+                await video.play();
+                addLog("摄像头已连接", "success");
+                
+                // 再次检查轨道状态
+                addLog(`播放后轨道状态: enabled=${videoTrack.enabled}, readyState=${videoTrack.readyState}`, "info");
+                
+                // 初始化 WebRTC，必须在获取有效视频流之后调用，需要已设置的videoTrack进行信令协商
+                await initWebRTC();
+            } catch (err) {
+                addLog("无法访问摄像头或麦克风: " + err.message, "error");
+                console.error("设备访问错误:", err);
+            }
+        }
+
+        // 添加音频可视化初始化函数
+        function initAudioVisualizer(stream) {
+            try {
+                // 创建音频上下文
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                
+                // 配置分析器节点
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                // 连接音频源
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                
+                // 获取画布上下文
+                audioCanvas = document.getElementById('audioCanvas');
+                audioCtx = audioCanvas.getContext('2d');
+                
+                // 调整画布大小以匹配容器
+                function resizeCanvas() {
+                    audioCanvas.width = audioCanvas.offsetWidth;
+                    audioCanvas.height = audioCanvas.offsetHeight;
+                }
+                
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // 开始动画
+                drawAudioVisualizer();
+                
+                addLog("音频可视化初始化成功", "success");
+            } catch (error) {
+                addLog("音频可视化初始化失败: " + error.message, "error");
+            }
+        }
+
+        // 添加音频可视化绘制函数
+        function drawAudioVisualizer() {
+            animationId = requestAnimationFrame(drawAudioVisualizer);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            const width = audioCanvas.width;
+            const height = audioCanvas.height;
+            const barWidth = width / dataArray.length;
+            
+            audioCtx.clearRect(0, 0, width, height);
+            
+            dataArray.forEach((value, index) => {
+                const barHeight = (value / 255) * height;
+                const x = index * barWidth;
+                const y = height - barHeight;
+                
+                // 根据音量大小渐变颜色
+                const hue = (value / 255) * 120; // 从红色渐变到绿色
+                audioCtx.fillStyle = `hsl(${hue}, 70%, 60%)`;
+                audioCtx.fillRect(x, y, barWidth - 1, barHeight);
+            });
+        }
+
+        function toggleCapture() {
+            if (!isCapturing) {  //状态切换控制，基于当前采集状态自动选择操作，"停止采集" : "开始采集"
+                startCapture();
+                captureButton.textContent = "停止采集";
+            } else {
+                stopCapture();
+                captureButton.textContent = "开始采集";
+            }
+            isCapturing = !isCapturing; //状态同步机制，确保状态变量与操作同步
+        }
+
+        
+     
+        //graph TD
+		    //A[创建WebSocket连接] --> B[onopen 连接成功]
+		    //A --> C[onmessage 消息处理]
+		    //A --> D[onerror 连接错误]
+		    //A --> E[onclose 连接关闭]
+		    //B --> F[初始化系统状态]
+		    //C --> G{消息类型判断}
+		    //G --> H[信令消息]
+		    //G --> I[帧率数据]
+		    //E --> J{重试判断}
+		    //J -->|未超限| K[定时重连]
+		    //J -->|已达上限| L[放弃连接]
+ 
+        function connectWebSocket() {
+            //连接建立阶段,使用明文WS协议
+		    ws = new WebSocket("ws://localhost:8080/websocket-demo/numberws");
+            addLog("正在连接WebSocket服务器...");
+            //连接成功处理
+            ws.onopen = function() {
+                reconnectAttempts = 0;
+                statusDiv.textContent = "WebSocket连接已建立";
+                statusDiv.className = "status success";
+                captureButton.disabled = false;  // 采集按钮状态
+                addLog("连接已建立", "success"); // 状态文字
+                startHeartbeat();
+            };
+            
+            ws.onmessage = function(event) {
+                const data = event.data;
+                
+                // 处理 WebRTC 信令消息,识别特征：JSON格式消息以{开头,调用专用信令处理器
+                if (data.startsWith('{')) {
+                    handleSignalingMessage(data);
+                    return;
+                }
+                //数据帧消息处理
+                if (data.includes('frame:')) {  //数据格式：简单键值对协议frame:123
+                    const frameCount = data.split(':')[1];
+                    document.getElementById("frameCount").textContent = frameCount;//界面更新：实时显示服务器端计算的帧数
+                    document.getElementById("captureStatus").textContent = "采集中";
+                }
+                addLog(`服务器响应: ${data}`);
+            };
+            //连接异常处理 
+            ws.onerror = function(error) {
+                statusDiv.textContent = "发生错误";
+                statusDiv.className = "status error";
+                addLog("WebSocket错误", "error");
+                console.error("WebSocket错误:", error);
+            };
+            //连接关闭处理
+            ws.onclose = function(event) {
+                statusDiv.textContent = "连接已关闭";
+                statusDiv.className = "status error";
+                captureButton.disabled = true;
+                stopCapture();  // 连接断开时停止采集
+                addLog("连接已关闭", "error");
+                
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    addLog(`尝试重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, "info");
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+        }
+        
+        function startHeartbeat() {//检测连接的
+            setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {//智能状态检查
+                    ws.send("ping");
+                    addLog("发送心跳", "info"); //日志
+                }
+            }, 30000);
+        }
+
+        async function detectAndCropFace(video) {
+            const tempCanvas = document.createElement('canvas');//创建画布
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = video.videoWidth;//画布尺寸
+            tempCanvas.height = video.videoHeight;//画布尺寸
+            tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+            
+            try {
+                const model = await blazeface.load({
+                    modelUrl: './models/blazeface/model.json'
+                });
+                const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                const predictions = await model.estimateFaces(imageData, false);//imageData：RGBA格式图像数据，false：不返回3D面部标记点
+                
+                if (predictions.length > 0) {
+                    const face = predictions[0];
+                    const x = face.topLeft[0];
+                    const y = face.topLeft[1];
+                    const width = face.bottomRight[0] - face.topLeft[0];
+                    const height = face.bottomRight[1] - face.topLeft[1];
+                    
+                    const faceCanvas = document.createElement('canvas');
+                    const faceCtx = faceCanvas.getContext('2d');
+                    faceCanvas.width = 224;
+                    faceCanvas.height = 224;
+                    
+                    const size = Math.max(width, height);//以面部区域中心为锚点，取最大边长为裁剪尺寸，保证正方形输出区域
+                    const centerX = x + width / 2;
+                    const centerY = y + height / 2;
+                    const cropX = centerX - size / 2;
+                    const cropY = centerY - size / 2;
+                    
+                    faceCtx.drawImage(  //图像标准化
+                        tempCanvas,
+                        cropX, cropY, size, size,
+                        0, 0, 224, 224
+                    );
+                    
+                    return faceCanvas.toDataURL('image/jpeg', 0.6);//返回，并数据压缩优化
+                }
+                return null;
+            } catch (error) {
+                console.error('人脸检测错误:', error);
+                return null;
+            }
+        }
+
+        function startCapture() {
+            if (!video.srcObject) { //摄像头状态检查
+                addLog("摄像头未就绪", "error");
+                return;
+            }
+            
+            document.getElementById("captureStatus").textContent = "采集中"; //更新采集状态
+            captureInterval = setInterval(async () => {
+                try {
+                    const faceImage = await detectAndCropFace(video); //调用 detectAndCropFace 函数从视频帧中检测人脸并裁剪。
+                    if (faceImage && ws && ws.readyState === WebSocket.OPEN) { //判断人脸检测成功（faceImage 存在），WebSocket 连接已建立且处于打开状态
+                        if (faceImage.length > 1024 * 1024 * 1.5) { // 图像大小限制，限制发送的图像大小不超过 1.5MB，避免网络拥堵或服务器处理压力
+                            addLog("图像数据过大，跳过此帧", "warning");
+                            return;
+                        }
+                        ws.send(faceImage);
+                        addLog("已发送人脸图像帧");
+                    } else {
+                        addLog("未检测到人脸", "info");
+                    }
+                } catch (error) { //异常处理
+                    console.error("捕获图像时发生错误:", error);
+                    addLog("捕获图像失败: " + error.message, "error");
+                }
+            }, 1000); //定时捕获与发送，每隔1.5秒执行一次人脸检测和图像发送。
+        }
+
+        function stopCapture() {
+            if (captureInterval) {
+                clearInterval(captureInterval);
+            }
+            document.getElementById("captureStatus").textContent = "已停止";
+            addLog("已停止采集");
+        }
+
+        // 添加一个开始按钮来手动启动摄像头和WebRTC
+        window.addEventListener('load', () => {
+            connectWebSocket();
+            const startButton = document.createElement('button');
+            startButton.textContent = '启动摄像头';
+            startButton.style.cssText = 'margin: 10px; padding: 10px 20px;';
+            startButton.onclick = setupCamera;
+            document.querySelector('.video-section').insertBefore(startButton, document.getElementById('status'));
+        });
+    </script>
+</body>
+</html> 
